@@ -6,7 +6,7 @@ To use PokkiApps.js add it in your background.html page and any page that needs 
 <!doctype html>
 <html>
 	<head>
-		<script src="../../source/pokkiHostedApps.js"></script>
+		<script src="http://cdn.pokki.com/libs/pokkiHostedApps.js"></script>
 	</head>
 [...]
 </html>
