@@ -15,7 +15,25 @@ To use PokkiApps.js add it in your background.html page and any page that needs 
 
 ## Examples
 
-** Hello World
+** Hello World **
+
+```javascript
+
+var app = new pokki.App({
+	url: 'http://google.com/',
+	minWidth: 980,
+	minHeight: 600
+});
+
+app.on('ready', function(e) {
+
+	// do something...
+
+});
+
+```
+
+** Injection **
 
 ```javascript
 
@@ -35,6 +53,25 @@ app.on('ready', function(e) {
 	page.injectStyle('css/custom.css');
 	page.injectScript('js/mymagic.js');
 
+});
+
+```
+
+** View events **
+
+```javascript
+
+var app = new pokki.App({
+	url: 'http://google.com/',
+	minWidth: 980,
+	minHeight: 600
+});
+
+app.on('ready', function(e) {
+	//DOMcontentLoaded
+
+	var page = e.getView();
+
 	page.on('load',function(){
 
 		page.off('load');
@@ -52,6 +89,13 @@ app.on('ready', function(e) {
 
 });
 
+```
 
+
+** Relay events **
+
+```javascript
+
+// TODO
 
 ```
