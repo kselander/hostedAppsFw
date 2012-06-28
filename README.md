@@ -13,7 +13,9 @@ To use PokkiApps.js add it in your background.html page and any page that needs 
 ```
 
 
-## Example
+## Examples
+
+* Hello World *
 
 ```javascript
 
