@@ -296,11 +296,12 @@ console.log('REQ > POLICY', req, policy);
 				name: policy.target,
 				requester: req.caller
 			});
+			page.setLocation(policy.url, {silent:true});
 			if (policy.show && !page.hidden) {
 				page.show();
 			} else {
 				page.hide();
-			}	
+			}
 
 			var callbackId = 'page_' + page.id;
 
@@ -311,6 +312,11 @@ console.log('REQ > POLICY', req, policy);
 				stopPropagation: function() {
 					this.propagate = false;
 				},
+				cancelAction: function() {
+					this.cancel = true;
+					util.log('[page loading cancelled]',policy.url);
+				},
+				cancel: false,
 				propagate: true
 			};
 
@@ -320,7 +326,10 @@ console.log('REQ > POLICY', req, policy);
 
 					page.state = 'response';
 
-					// app
+					// remove the option to cancel action, no longer possible at this stage
+					delete ev.cancel;
+					ev.cancelAction = function() {throw new Error('Action can be only cancelled from \'request\' event');};
+
 					policy.controller && policy.controller.trigger('response', ev);
 					ev.propagate && app.trigger('response', ev);
 					ev.propagate && page.trigger('response', ev);
@@ -332,7 +341,6 @@ console.log('REQ > POLICY', req, policy);
 
 					page.state = 'ready';
 
-					// app
 					policy.controller && policy.controller.trigger('ready loading', ev);
 					ev.propagate && app.trigger('ready loading', ev);
 					ev.propagate && page.trigger('ready loading', ev);
@@ -344,7 +352,6 @@ console.log('REQ > POLICY', req, policy);
 
 					page.state = 'load';
 
-					//TODO: wrap triggers to synchronise them (i.e. to attach page.onLoad in app.onLoad)
 					policy.controller && policy.controller.trigger('load', ev);
 					ev.propagate && app.trigger('load', ev);
 					ev.propagate && page.trigger('load', ev);
@@ -377,13 +384,18 @@ console.log('REQ > POLICY', req, policy);
 				config.debug ? "console.log('[' + window.name + ']', 'DOMContentLoaded (injectAfterDOM)');" : "",
 				"pokki.rpc( '" + rpcNsStr + ".onDomContentLoaded()' );"
 			];
+
+			policy.controller && policy.controller.trigger('request', ev);
+			ev.propagate && app.trigger('request', ev);
+			ev.propagate && page.trigger('request', ev);
 			
-			return {
+			return ev.cancel ? false : {
 				targetUrl: policy.url,
 				targetPage: policy.target,
 				injectBeforeDOM : eval_onResponse.join(' '),
 				injectAfterDOM : eval_onDomContentLoaded.join(' ')
 			};
+
 		};
 	};
 
@@ -650,7 +662,7 @@ console.log('REQ > POLICY', req, policy);
 			show: true
 		},options);
 
-		this.location = attrs.url ? util.parseUrl(attrs.url) : {protocol: 'mirror'};
+		this.setLocation(attrs.url, {silent:true});
 
 		this.id = attrs.url ? ((this.location.host+this.location.path).replace(/[\.\/\:]/g,'').toUpperCase() + '_' + util.uniqueId()) : window.name; //singleton(kinda)
 
@@ -694,6 +706,12 @@ console.log('REQ > POLICY', req, policy);
 
 		reLoad: function(options) {
 			pokki.navigateTo(this.location.source, this.name);
+		},
+
+		setLocation: function(url, options) {
+			options || (options={});
+			this.location = url ? util.parseUrl(url) : {protocol: 'mirror'};
+			options.silent || this.load(this.location.source);
 		},
 
 		show: function() {

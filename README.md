@@ -13,9 +13,7 @@ To use PokkiApps.js add it in your background.html page and any page that needs 
 ```
 
 
-## Examples
-
-** Hello World **
+## Hello World
 
 ```javascript
 
@@ -33,7 +31,7 @@ app.on('ready', function(e) {
 
 ```
 
-** Injection **
+## Injection
 
 ```javascript
 
@@ -57,7 +55,7 @@ app.on('ready', function(e) {
 
 ```
 
-** View events **
+## View events
 
 ```javascript
 
@@ -78,8 +76,6 @@ app.on('ready', function(e) {
 
 		console.log('PAGE load', page);
 
-		app.trigger('somethingReady');
-
 	});
 
 	page.on('progress',function(progress){
@@ -92,7 +88,7 @@ app.on('ready', function(e) {
 ```
 
 
-** Relay events **
+## Relay events
 
 ```javascript
 
