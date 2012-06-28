@@ -56,6 +56,7 @@ pokki.App = (function( headObj, pokki ) {
 		extend: function(obj) {
 		
 			Array.prototype.slice.call(arguments, 1).forEach( function(source) {
+				if (!source) return;
 				for (var attr in source) {
 					obj[attr] = source[attr];
 				}
@@ -268,7 +269,7 @@ pokki.App = (function( headObj, pokki ) {
 			util.log('[onPageLoading]', url, targetPageName, currentUrl, action, hasWebsheet);
 			
 			var req = {
-				url: (url == 'start') ? app.defaults.url : url,
+				url: (url == 'start') ? app.options.url : url,
 				caller: {
 					name: targetPageName, //window|websheet|someName
 					action: action
@@ -281,61 +282,74 @@ pokki.App = (function( headObj, pokki ) {
 
 			var policy = app.route(req);
 			policy = util.extend({
-				show: app.defaults.show,
+				show: app.options.show,
 				target: req.caller.name || 'window',
 				url: req.url,
-				controller: app
+				controller: null
 			},policy);
 
 console.log('REQ > POLICY', req, policy);
 			
-
-/*
-			//TODO: merge Page/View
-			var page = Globals.windows[policy.target] = new Page({
-				url:policy.url,
-				target: policy.target,
-			});
-*/
-
-			// pokki.View
-			var page = new View({
+			// pokki.View (singleton to maintain event handlers)
+			var page = Globals.windows[policy.target] || new View({
 				url: policy.url,
 				name: policy.target,
 				requester: req.caller
 			});
+			if (policy.show && !page.hidden) {
+				page.show();
+			} else {
+				page.hide();
+			}	
 
 			var callbackId = 'page_' + page.id;
 
 			var ev = {
 				getView: function() {
 					return page;
-				}
+				},
+				stopPropagation: function() {
+					this.propagate = false;
+				},
+				propagate: true
 			};
-
-			pokki.setPageVisible && pokki.setPageVisible(policy.target, policy.show);
 
 			Globals.cb[callbackId] = {
 
-				onDomContentLoaded: function() {
+				onResponse: function() {
 
-					page.state = 'loading';
-
+					page.state = 'response';
 
 					// app
-					policy.controller.trigger('change loading', ev);
+					policy.controller && policy.controller.trigger('response', ev);
+					ev.propagate && app.trigger('response', ev);
+					ev.propagate && page.trigger('response', ev);
 				
-					util.log('[onPageLoading.onDomContentLoaded]', 'callback');
+					util.log('[onPageLoading.onResponse]', 'callback', ev.propagate);
+				},
+
+				onDomContentLoaded: function() {
+
+					page.state = 'ready';
+
+					// app
+					policy.controller && policy.controller.trigger('ready loading', ev);
+					ev.propagate && app.trigger('ready loading', ev);
+					ev.propagate && page.trigger('ready loading', ev);
+				
+					util.log('[onPageLoading.onDomContentLoaded]', 'callback', ev.propagate);
 				},
 
 				onLoad: function() {
 
 					page.state = 'load';
 
-					policy.controller.trigger('load',ev);
-					page.trigger('load');
+					//TODO: wrap triggers to synchronise them (i.e. to attach page.onLoad in app.onLoad)
+					policy.controller && policy.controller.trigger('load', ev);
+					ev.propagate && app.trigger('load', ev);
+					ev.propagate && page.trigger('load', ev);
 
-					util.log('[onPageLoading.onLoad]', 'callback');
+					util.log('[onPageLoading.onLoad]', 'callback', ev.propagate);
 				
 					// cleanup
 					delete Globals.cb[callbackId];
@@ -344,9 +358,9 @@ console.log('REQ > POLICY', req, policy);
 			};
 			var rpcNsStr = "_pokkiAppGlob.cb." + callbackId;
 
-			var eval_onDomContentLoaded = [
+			var eval_onResponse = [
 				"window.name = '" + policy.target + "';",
-				config.debug ? "console.log('[' + window.name + ':onPageLoading]', 'inject before DOM (DOMContentLoaded)');" : "",
+				config.debug ? "console.log('[' + window.name + ']', 'response (injectBeforeDOM)');" : "",
 				"window.pokxyRecv = { vars:{} };",
 				"window.pokxyRecv.del = function(cbId){ delete pokxyRecv.vars[cbId]; };",
 				"window.pokxyRecv.ret = function(cbstr,err,result){ pokki.rpcArgs('_pokkiAppGlob.cb.' + cbstr, (err ? err + '' : ''), (result ? result + '' : '')) };",
@@ -354,20 +368,21 @@ console.log('REQ > POLICY', req, policy);
 				"window.pokxyRecv.exec = function(cmd, cbId){",
 				" try { var res = (new Function(cmd))(); console.log('[POKKI-WORKER]:result',arguments,res); pokxyRecv.ret(cbId,null,res); return res; }",
 				" catch(err) { console.log('[POKKI-WORKER:error]',arguments,err+'',err); pokxyRecv.ret(cbId,err); } };",
+				"window.addEventListener('load', function() { console.log('[' + window.name + ']','load'); pokki.rpc( '" + rpcNsStr + ".onLoad()' ); });",
+				"pokki.rpc( '" + rpcNsStr + ".onResponse()' );"
+			];
+
+			var eval_onDomContentLoaded = [
+				"window.name = '" + policy.target + "';",
+				config.debug ? "console.log('[' + window.name + ']', 'DOMContentLoaded (injectAfterDOM)');" : "",
 				"pokki.rpc( '" + rpcNsStr + ".onDomContentLoaded()' );"
 			];
 			
-			var eval_onLoad = [
-				"window.name = '" + policy.target + "';",
-				config.debug ? "console.log('[' + window.name + ':onPageLoading]', 'inject after DOM (Load)');" : "",
-				"pokki.rpc( '" + rpcNsStr + ".onLoad()' );"
-			];
-
 			return {
 				targetUrl: policy.url,
 				targetPage: policy.target,
-				injectBeforeDOM : eval_onDomContentLoaded.join(' '),
-				injectAfterDOM : eval_onLoad.join(' ')
+				injectBeforeDOM : eval_onResponse.join(' '),
+				injectAfterDOM : eval_onDomContentLoaded.join(' ')
 			};
 		};
 	};
@@ -417,6 +432,8 @@ console.log('REQ > POLICY', req, policy);
 
 		send: function(cmd, cb, options) {
 
+			var self = this;
+
 			options || (options={});
 			if (options.assign !== false) options.assign=true;
 			if (options.silent !== true) options.silent=false;
@@ -432,7 +449,7 @@ console.log('REQ > POLICY', req, policy);
 			Globals.cb[pokxyBit.id] = function( err, res ) {
 
 				if (err) {
-					util.log('[Pokxy.send:error]', this.target, pokxyBit.getCommand());
+					util.log('[Pokxy.send:error]', self.target, err, {cmd: pokxyBit.getCommand()} );
 					return options.onError && options.onError( err );
 				}
 
@@ -450,7 +467,7 @@ console.log('REQ > POLICY', req, policy);
 				// if (!options.keepReference) pokki.rpc(this.target, "pokxyRecv.del('" + pokxyBit.id + "');" );
 			};
 
-			util.log( '[Pokxy.send]', this.target, pokxyBit.getCommand() );
+			util.log( '[Pokxy.send]', this.target, {cmd: pokxyBit.getCommand()} );
 			pokki.rpc( this.target, pokxyBit.getCommand() );
 
 			return pokxyBit;
@@ -598,7 +615,6 @@ console.log('REQ > POLICY', req, policy);
 				"var elem = pokxyRecv.vars['" + this.id + "'];",
 				"var prevVal = elem.innerText;",
 				"pokxyRecv.vars['" + this.id + "_timer'] = setInterval( function(){",
-				//"  console.log('testing',prevVal);",
 				"  if (prevVal !== elem.innerText) {",
 				"    prevVal = elem.innerText;",
 				"    pokxyRecv.ret('{callbackId}', null, prevVal);",
@@ -622,126 +638,7 @@ console.log('REQ > POLICY', req, policy);
 	};
 
 	// = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
-	// View - Page
-	// = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
-
-	var Page = function( attrs, options ) {
-		
-		attrs || (attrs={});
-		options || (options={});
-
-		this.id = util.uniqueId();
-		this.location = attrs.url ? util.parseUrl(attrs.url) : {};
-		this.state = attrs.state || null;
-		this.hidden = false;
-		this.name = attrs.target || null;
-		this.viewport = 'window';
-		this.worker = attrs.worker || new Pokxy(this.name);
-
-	};
-
-	util.extend( Page.prototype, Events, {
-
-		show: function() {
-			this.name && pokki.showView(this.name);
-			this.hidden = false;
-			return this;
-		},
-
-		hide: function() {
-			this.name && pokki.hideView(this.name);
-			this.hidden = true;
-			return this;
-		},
-
-		injectStyle: function(fileName) {
-
-			var self = this;
-
-			util.httpGet(fileName, function( cssText ) {
-
-				var cmd = [
-					"var style = document.head.appendChild( document.createElement('style') );",
-					"style.appendChild(document.createTextNode('" + util.escape(cssText) + "'));",
-					"return style;"
-				];
-				var proxyVar = self.worker.send(cmd.join(' '), function(updProxyVar) {
-
-					console.log('injectStyle','DONE!!!!',updProxyVar);
-
-				}, { assign:false });
-
-			});
-			return this;
-
-		},
-
-		injectScript: function(url) {
-
-			var self = this;
-
-			//if (!url.match(/^https?:/i)) throw new Error('[injectScript:error] injectScript expects a url');
-
-			if (url.match(/^https?:/i)) {
-
-				var cmd = [
-					"var scr = document.createElement('script');",
-					"scr.src = '" + url + "';",
-					"document.head.appendChild(scr);",
-					"return scr;"
-				];
-				var proxyVar = self.worker.send(cmd.join(' '), function(updProxyVar) {
-
-					console.log('injectScript', 'DONE!!!!',updProxyVar);
-
-				}, { assign:false });
-
-			} else {
-
-				util.httpGet(url, function( jsText ) {
-
-					var cmd = [
-						"var scr = document.head.appendChild( document.createElement('script') );",
-						"scr.appendChild(document.createTextNode('" + util.escape(jsText) + "'));",
-						"return scr;"
-					];
-
-					var proxyVar = self.worker.send(cmd.join(' '), function(updProxyVar) {
-
-						console.log('injectScript','DONE!!!!',updProxyVar);
-
-					}, { assign:false });
-
-				});
-
-
-			}
-			return this;
-
-		},
-
-		select: function(selector) {
-
-			var self = this;
-
-			var cmd = [
-				"return document.querySelectorAll('" + selector + "')[0];"
-			];
-			return self.worker.send(cmd.join(' '), function(updProxyVar) {
-
-				console.log('select', 'DONE!!!!',updProxyVar);
-
-			}, {assign:true} );
-
-		},
-
-		// TODO:
-		//on('resize') window.addEventListener('resize',function(){console.log(arguments)})
-
-	});
-
-	// = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
-	// View - Overlay
+	// View
 	// = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
 
 	var View = pokki.View = function( attrs, options ) {
@@ -749,7 +646,7 @@ console.log('REQ > POLICY', req, policy);
 		attrs || (attrs={});
 		options || (options={});
 
-		this.prefs = options = util.extend({
+		this.options = options = util.extend({
 			show: true
 		},options);
 
@@ -759,6 +656,7 @@ console.log('REQ > POLICY', req, policy);
 
 		this.remote = this.location.protocol.match(/^http/) ? true : false;
 		this.state = attrs.state || null;
+		this.hidden = false;
 		this.name = attrs.name || this.id; // = "target"
 		this.viewport = 'window';
 		this.requester = attrs.requester || { name: window.name, action:'app' };
@@ -780,22 +678,14 @@ console.log('REQ > POLICY', req, policy);
 			//mirror view (kinda singleton when calling pokki.View from a satellite page)
 			if (!this.location.source) return this;
 
+			//change url
+			if (typeof options === 'string') return pokki.navigateTo(options, this.name);
+
 			//reload
 			if (this.state === 'load') return this.reLoad();
 
 			options || (options={});
-			options = util.extend({
-				show: this.prefs.show
-			},options);
-
-			// workaround: pages loaded through loadPage don't trigger onPageLoading
-			this.requester.action==='app' && this.on('progress',function(evt){
-				pokki.setPageVisible && pokki.setPageVisible(self.name, options.show);
-				if (evt.progress == 100) {
-					self.state = 'load';
-					self._trigger('load');
-				}
-			});
+			this.options = util.extend(this.options, options);
 
 			pokki.loadPage(this.viewport, this.location.source, this.name);
 
@@ -803,7 +693,6 @@ console.log('REQ > POLICY', req, policy);
 		},
 
 		reLoad: function(options) {
-			this.state='loading';
 			pokki.navigateTo(this.location.source, this.name);
 		},
 
@@ -829,11 +718,6 @@ console.log('REQ > POLICY', req, policy);
 			return this;
 		},
 
-
-
-
-
-
 		injectStyle: function(fileName) {
 
 			var self = this;
@@ -847,7 +731,7 @@ console.log('REQ > POLICY', req, policy);
 				];
 				var proxyVar = self.worker.send(cmd.join(' '), function(updProxyVar) {
 
-					console.log('injectStyle','DONE!!!!',updProxyVar);
+					util.log('[View.injectStyle]',fileName,updProxyVar);
 
 				}, { assign:false });
 
@@ -860,8 +744,6 @@ console.log('REQ > POLICY', req, policy);
 
 			var self = this;
 
-			//if (!url.match(/^https?:/i)) throw new Error('[injectScript:error] injectScript expects a url');
-
 			if (url.match(/^https?:/i)) {
 
 				var cmd = [
@@ -872,7 +754,7 @@ console.log('REQ > POLICY', req, policy);
 				];
 				var proxyVar = self.worker.send(cmd.join(' '), function(updProxyVar) {
 
-					console.log('injectScript', 'DONE!!!!',updProxyVar);
+					util.log('[View.injectScript:done]', url, updProxyVar);
 
 				}, { assign:false });
 
@@ -886,9 +768,12 @@ console.log('REQ > POLICY', req, policy);
 						"return scr;"
 					];
 
+					// TODO: should work as a simple eval!
+					//cmd = [util.escape(jsText)];
+
 					var proxyVar = self.worker.send(cmd.join(' '), function(updProxyVar) {
 
-						console.log('injectScript','DONE!!!!',updProxyVar);
+						util.log('[View.injectScript:done]', url, updProxyVar);
 
 					}, { assign:false });
 
@@ -909,7 +794,7 @@ console.log('REQ > POLICY', req, policy);
 			];
 			return self.worker.send(cmd.join(' '), function(updProxyVar) {
 
-				console.log('select', 'DONE!!!!',updProxyVar);
+				util.log('[View.select:done]', selector, updProxyVar);
 
 			}, {assign:true} );
 
@@ -921,17 +806,29 @@ console.log('REQ > POLICY', req, policy);
 	// pokki.App constructor and methods
 	// = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
 
+	pokki.Controller = function( options ) {
+		this.options = options || {};
+	};
+
+	util.extend( pokki.Controller.prototype, Events, {
+	});
+
+	// = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
+	// pokki.App constructor and methods
+	// = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
+
 	var App = function( options ) {
 
 		var self = this;		
 		options || (options={});
-		util.extend(options,{
-			minWidth: 1050,
+		this.options = options = util.extend({
+			minWidth: 1024,
 			minHeight: 800,
 			maxWidth: 0,
 			maxHeight: 0,
 			allowResize: true,
-		});
+			show: true
+		},options);
 
 		// mount platform hooks
 		headObj.onPageLoading = onPageLoading(this);
@@ -939,11 +836,6 @@ console.log('REQ > POLICY', req, policy);
 		headObj.onPageLoadProgress = onPageLoadProgress(this);
 
 		headObj._pokkiApp = this;
-
-		this.defaults = {
-			url: options.startupUrl,
-			show: typeof options.show !== 'undefined' ? options.show : true
-		};
 
 		this.setRouter( options.router, options );
 
@@ -957,7 +849,6 @@ console.log('REQ > POLICY', req, policy);
 		});
 
 		Globals.windows = {};
-		//this._pages = {};
 
 		pokki.addEventListener('showing',function() {
 			self.trigger('showing');
@@ -993,10 +884,60 @@ console.log('REQ > POLICY', req, policy);
 			//	url: url to go to, empty to continue to requested url
 			//	}
 
-			router || ( router = function(){
+			var self = this;
+
+			this.routeHandlers || (this.routeHandlers = []);
+
+			router || ( router = function(req){
+
+				if (!self.routeHandlers.length) return {};
+
+				for (var i = 0, max = self.routeHandlers.length; i < max; i += 1) {
+					// first match wins
+					if (self.routeHandlers[i].match(req)) return {controller: self.routeHandlers[i].controller};
+				}
+
 				return {};
+
 			});
-			this.routeHandler = router;
+			this.router = router;
+		},
+
+		registerRoute: function(pattern, controller, options) {
+
+			if (!controller instanceof pokki.Controller) throw new Error('route handler must be a pokki.Controller instance');
+			this.routeHandlers || (this.routeHandlers = []);
+
+			options || (options={});
+			options.matchCondition===false || (options.matchCondition=true);
+
+			var ctrlWrap = {
+				match: null,
+				controller: controller
+			};
+			if ( Array.isArray(pattern) ) {
+				// array of patterns
+				ctrlWrap.match = function(req) {
+					var ret = pattern.filter( function(regex) {
+						return req.url.match(regex);
+					}).length;
+					return options.matchCondition ? ret : !ret;
+				};
+			} else if ( typeof pattern === 'string' ) {
+				// string
+				ctrlWrap.match = function(req) {
+					var ret = req.url.toLowerCase().indexOf(pattern.toLowerCase()) >= 0;
+					return options.matchCondition ? ret : !ret;
+				};
+			} else {
+				// RegExp
+				ctrlWrap.match = function(req) {
+					var ret = req.url.match(pattern);
+					return options.matchCondition ? ret : !ret;
+				};
+			}
+
+			this.routeHandlers.push(ctrlWrap);
 		},
 
 		route: function(req) {
@@ -1006,8 +947,12 @@ console.log('REQ > POLICY', req, policy);
 			// - Continue to load and display the page
 			// - Deny the loading, and therefore display, of the page
 			// - Continue to load the page, however not display it until triggered by the pokki.pageReady API
+			// and can define a controller that will receive the "request" event
 
-			return this.routeHandler(req);
+			var policy = this.router(req);
+			util.log('[app.route]', req, policy);
+
+			return policy;
 		},
 
 		overlay: function(url, options) {
@@ -1031,17 +976,89 @@ console.log('REQ > POLICY', req, policy);
 			return typeof force === 'undefined' ? true : force;
 		},
 
-		broadcast: function(overlayName, eventName, params) {
+		resize: function(prefs) {
+
+			var windowConf = util.extend({}, this.options);
+			if (prefs.width) {
+				windowConf.minWidth = prefs.width;
+				windowConf.maxWidth = prefs.width+1;
+			}
+			if (prefs.height) {
+				windowConf.minHeight = prefs.width;
+				windowConf.maxHeight = prefs.width+1;
+			}
+
+			pokki.allowResize(
+				Array.isArray(prefs.allowResize) ? prefs.allowResize[0] : prefs.allowResize, // resize-x,resize-y,size
+				Array.isArray(prefs.allowResize) ? prefs.allowResize[1] : prefs.allowResize, 
+				windowConf
+			);
+
+			//TODO: animate ( 1> set allowresize to false 2> resize element)
+			//TODO: restore max/min sizes if prefs.allowResize (so the user can resize the window)
+
+		},
+
+		getContextMenu: function(handlers) {
+
+			this.contextMenu || (this.contextMenu = {
+
+				add: function(label,cb) {
+
+					var self = this;
+
+					if (typeof this._items === 'undefined') {
+						this._items = [];
+						pokki.addEventListener("context_menu", function(id) {
+							var item = self._items.filter(function(i){return i.id===id;}).shift();
+							item && item.cb();
+						});
+					}
+
+					var menuItem = {
+						id: util.uniqueId(),
+						cb: cb,
+						label: label,
+						_hidden: false,
+						show: function() { if (!this._hidden) return this; this._hidden = false; self._refresh(); return this;},
+						hide: function() { if (this._hidden) return this; this._hidden = true; self._refresh(); return this;}
+					};
+					this._items.push(menuItem);
+					this._refresh();
+
+					return menuItem;
+				},
+
+				_refresh: function() {
+					pokki.resetContextMenu();
+					this._items.forEach(function(item){
+						item._hidden || pokki.addContextMenuItem(item.label, item.id);
+					});
+				},
+
+				remove: function(kwd) {
+					// can remove by passing id, label, callback ref or menuItem object (returned by menu.add)
+					if (typeof kwd !== 'string' && typeof kwd !== 'function') kwd = kwd.id;
+					this._items = this._items.filter(function(i){return i.id !== kwd && i.label !== kwd && i.cb !== kwd;});
+					this._refresh();
+				}
+
+			});
+
+			return this.contextMenu;
+		},
+
+		broadcast: function(target, eventName, params) {
 			// TODO: move this to the global scope 
 
 			params || (params='');
 
-			util.log('[App.broadcast]',overlayName, eventName, params);
+			util.log('[App.broadcast]',target, eventName, params);
 
-			if (!overlayName) throw new Error('app.receive requires an overlayName (window.name)');
-			if (!eventName) throw new Error('app.receive requires an eventName');
-			if (!Globals.windows[overlayName]) return;
-			Globals.windows[overlayName].trigger(eventName,params);
+			if (!target) throw new Error('app.broadcast requires a target (window.name)');
+			if (!eventName) throw new Error('app.broadcast requires an eventName');
+			if (!Globals.windows[target]) return;
+			Globals.windows[target].trigger(eventName,params);
 
 		}
 
